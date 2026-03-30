@@ -10,74 +10,75 @@ reguly = [
 
 fakty = ["ograniczenie do 50", "szybkosc ponizej 50", "mgla"]
 
-def wyprowadz_fakty(lista_faktow):
+
+def wyprowadz_wszystko(lista_faktow):
     zmiana = True
     while zmiana:
         zmiana = False
         for r in reguly:
-            if r["wniosek"] not in lista_faktow:
-                war_ok = all(w in lista_faktow for w in r["warunki"])
-                neg_ok = all(n not in lista_faktow for n in r["negacje"])
-                if war_ok and neg_ok:
-                    lista_faktow.append(r["wniosek"])
-                    zmiana = True
+            if r["negacje"]:
+                continue
+            war_ok = all(w in lista_faktow for w in r["warunki"])
+            if war_ok and r["wniosek"] not in lista_faktow:
+                lista_faktow.append(r["wniosek"])
+                zmiana = True
+    zmiana = True
+    while zmiana:
+        zmiana = False
+        for r in reguly:
+            if not r["negacje"]:
+                continue
+            war_ok = all(w in lista_faktow for w in r["warunki"])
+            neg_ok = all(n not in lista_faktow for n in r["negacje"])
+            if war_ok and neg_ok and r["wniosek"] not in lista_faktow:
+                lista_faktow.append(r["wniosek"])
+                zmiana = True
     return lista_faktow
 
-def sprawdz_naf(fakt, lista_faktow):
-    print(f"  Probuje udowodnic \"{fakt}\"...")
-    kopia = list(lista_faktow)
-    wyprowadzone = wyprowadz_fakty(kopia)
-    if fakt in wyprowadzone:
-        print(f"  \"{fakt}\" da sie wyprowadzic z faktow")
-        print(f"  NAF: ~\"{fakt}\" jest FALSZYWE")
+
+def naf(fakt):
+    print(f"NAF: Czy ~\"{fakt}\" jest prawdziwe?")
+    print(f"  Probuje udowodnic \"{fakt}\" z bazy wiedzy...")
+    wszystkie = wyprowadz_wszystko(list(fakty))
+    if fakt in wszystkie:
+        print(f"  \"{fakt}\" UDOWODNIONE -> ~\"{fakt}\" = FALSZ")
         return False
     else:
-        print(f"  \"{fakt}\" NIE da sie wyprowadzic z faktow")
-        print(f"  NAF: ~\"{fakt}\" jest PRAWDZIWE (bo brak dowodu na \"{fakt}\")")
+        print(f"  \"{fakt}\" NIEUDOWODNIONE -> ~\"{fakt}\" = PRAWDA")
         return True
 
 
-print("=== NEGATION AS FAILURE (NAF) ===")
-print("Fakty poczatkowe:", fakty)
-print()
-
-print("--- Test 1: ~\"prawidlowa predkosc\" ---")
-wynik1 = sprawdz_naf("prawidlowa predkosc", fakty)
-print(f"Wynik: ~\"prawidlowa predkosc\" = {wynik1}")
-print()
-
-print("--- Test 2: ~\"trudne warunki\" ---")
-wynik2 = sprawdz_naf("trudne warunki", fakty)
-print(f"Wynik: ~\"trudne warunki\" = {wynik2}")
-print()
-
-print("--- Test 3: ~\"snieg\" ---")
-wynik3 = sprawdz_naf("snieg", fakty)
-print(f"Wynik: ~\"snieg\" = {wynik3}")
-print()
-
-print("=== Wnioskowanie z NAF ===")
-print()
+print("=== NEGATION AS FAILURE ===")
 print("Fakty:", fakty)
-
-wyprowadzone = wyprowadz_fakty(list(fakty))
-print("Po wnioskowanie:", wyprowadzone)
 print()
 
-print("Regula 2: ~\"prawidlowa predkosc\" -> \"nalezy zwolnic\"")
-if "prawidlowa predkosc" not in wyprowadzone:
-    print("  \"prawidlowa predkosc\" brak w faktach -> NAF potwierdza negacje")
-    print("  Wniosek: \"nalezy zwolnic\"")
-else:
-    print("  \"prawidlowa predkosc\" jest w faktach -> NAF nie potwierdza negacji")
-    print("  Regula 2 NIE odpala")
+naf("prawidlowa predkosc")
+print()
+naf("trudne warunki")
+print()
+naf("snieg")
 print()
 
-print("Regula 4: \"prawidlowa predkosc\" && ~\"trudne warunki\" -> \"jedz jak chcesz\"")
-if "prawidlowa predkosc" in wyprowadzone and "trudne warunki" not in wyprowadzone:
-    print("  Oba warunki spelnione -> Wniosek: \"jedz jak chcesz\"")
-elif "prawidlowa predkosc" not in wyprowadzone:
-    print("  \"prawidlowa predkosc\" brak -> regula NIE odpala")
-else:
-    print("  \"trudne warunki\" jest w faktach -> NAF nie potwierdza ~\"trudne warunki\"")
-    print("  Regula 4 NIE odpala")
+print("=== Jak NAF wplywa na reguly ===")
+print()
+wszystkie = wyprowadz_wszystko(list(fakty))
+print("Wyprowadzone fakty:", wszystkie)
+print()
+
+print("Regula 2: ~prawidlowa_predkosc -> nalezy zwolnic")
+print(f"  prawidlowa predkosc jest w faktach -> NAF: negacja FALSZYWA")
+print(f"  Regula 2 NIE odpala")
+print()
+
+print("Regula 4: prawidlowa_predkosc && ~trudne_warunki -> jedz jak chcesz")
+print(f"  trudne warunki sa w faktach -> NAF: negacja FALSZYWA")
+print(f"  Regula 4 NIE odpala")
+print()
+
+print("=== Kontrprzyklad: bez mgly ===")
+fakty2 = ["ograniczenie do 50", "szybkosc ponizej 50"]
+wszystkie2 = wyprowadz_wszystko(list(fakty2))
+print(f"Fakty: {fakty2}")
+print(f"Wyprowadzone: {wszystkie2}")
+print(f"~trudne_warunki = PRAWDA (bo nie ma mgly ani sniegu)")
+print(f"Regula 4 ODPALA -> jedz jak chcesz")

@@ -10,9 +10,6 @@ reguly = [
 
 fakty = ["ograniczenie do 50", "szybkosc ponizej 50", "mgla"]
 
-reguly_bez_negacji = [r for r in reguly if not r["negacje"]]
-reguly_z_negacja = [r for r in reguly if r["negacje"]]
-
 print("=== WNIOSKOWANIE W PRZOD ===")
 print("Fakty poczatkowe:", fakty)
 print()
@@ -31,9 +28,9 @@ while zmiana:
             krok += 1
             fakty.append(r["wniosek"])
             zmiana = True
-            print(f"Krok {krok}: Uzyta regula {i + 1}")
-            print(f"  Spelnione warunki: {r['warunki']}")
-            print(f"  Nowy fakt: \"{r['wniosek']}\"")
+            print(f"Krok {krok}: Regula {i + 1}")
+            print(f"  Warunki: {r['warunki']}")
+            print(f"  Dodaje: \"{r['wniosek']}\"")
             print()
 
 print("--- Etap 2: reguly z negacja (NAF) ---")
@@ -49,11 +46,11 @@ while zmiana:
             krok += 1
             fakty.append(r["wniosek"])
             zmiana = True
-            print(f"Krok {krok}: Uzyta regula {i + 1}")
+            print(f"Krok {krok}: Regula {i + 1}")
             if r["warunki"]:
-                print(f"  Spelnione warunki: {r['warunki']}")
-            print(f"  Brak w faktach (NAF): {r['negacje']}")
-            print(f"  Nowy fakt: \"{r['wniosek']}\"")
+                print(f"  Warunki: {r['warunki']}")
+            print(f"  Negacja (NAF): {r['negacje']} - brak w faktach")
+            print(f"  Dodaje: \"{r['wniosek']}\"")
             print()
 
 print("Fakty koncowe:", fakty)

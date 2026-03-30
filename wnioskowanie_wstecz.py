@@ -10,60 +10,55 @@ reguly = [
 
 fakty = ["ograniczenie do 50", "szybkosc ponizej 50", "mgla"]
 
-odwiedzone = set()
 
-def udowodnij(cel, poziom=0):
+def udowodnij(cel, sciezka, poziom):
     wcięcie = "  " * poziom
-    print(f"{wcięcie}Cel: \"{cel}\"")
 
     if cel in fakty:
-        print(f"{wcięcie}-> \"{cel}\" jest w faktach")
+        print(f"{wcięcie}\"{cel}\" jest faktem -> PRAWDA")
         return True
 
-    if cel in odwiedzone:
-        print(f"{wcięcie}-> juz sprawdzane, nie udalo sie")
+    if cel in sciezka:
         return False
-    odwiedzone.add(cel)
 
     for i, r in enumerate(reguly):
-        if r["wniosek"] == cel:
-            print(f"{wcięcie}Probuje regule {i + 1}: {r['warunki']} + ~{r['negacje']} -> \"{r['wniosek']}\"")
+        if r["wniosek"] != cel:
+            continue
 
-            wszystko_ok = True
+        print(f"{wcięcie}Probuje regule {i + 1} dla \"{cel}\"")
 
-            for w in r["warunki"]:
-                if not udowodnij(w, poziom + 1):
-                    wszystko_ok = False
+        ok = True
+        for w in r["warunki"]:
+            if not udowodnij(w, sciezka + [cel], poziom + 1):
+                ok = False
+                break
+
+        if ok:
+            for n in r["negacje"]:
+                print(f"{wcięcie}  NAF: czy \"{n}\" da sie udowodnic?")
+                if udowodnij(n, sciezka + [cel], poziom + 2):
+                    print(f"{wcięcie}  NAF: tak -> ~\"{n}\" FALSZ")
+                    ok = False
                     break
+                else:
+                    print(f"{wcięcie}  NAF: nie -> ~\"{n}\" PRAWDA")
 
-            if wszystko_ok:
-                for n in r["negacje"]:
-                    print(f"{wcięcie}  Sprawdzam czy NIE da sie udowodnic: \"{n}\"")
-                    if udowodnij(n, poziom + 1):
-                        print(f"{wcięcie}  \"{n}\" udowodnione -> negacja NIESPELNIONA")
-                        wszystko_ok = False
-                        break
-                    else:
-                        print(f"{wcięcie}  \"{n}\" nieudowodnione -> negacja SPELNIONA (NAF)")
+        if ok:
+            print(f"{wcięcie}Regula {i + 1} SUKCES -> \"{cel}\"")
+            return True
 
-            if wszystko_ok:
-                print(f"{wcięcie}-> Regula {i + 1} SUKCES: udowodniono \"{cel}\"")
-                fakty.append(cel)
-                return True
-
-    print(f"{wcięcie}-> Nie udalo sie udowodnic \"{cel}\"")
+    print(f"{wcięcie}\"{cel}\" - nie da sie udowodnic")
     return False
 
 
 print("=== WNIOSKOWANIE WSTECZ ===")
-print("Fakty poczatkowe:", fakty)
+print("Fakty:", fakty)
 print()
 
-cele = ["nalezy zwolnic", "jedz jak chcesz", "trudne warunki", "prawidlowa predkosc"]
+cele = ["nalezy zwolnic", "jedz jak chcesz"]
 
 for cel in cele:
-    odwiedzone.clear()
-    print(f"--- Czy mozna udowodnic: \"{cel}\"? ---")
-    wynik = udowodnij(cel)
+    print(f"--- Cel: \"{cel}\" ---")
+    wynik = udowodnij(cel, [], 0)
     print(f"Wynik: {wynik}")
     print()

@@ -1,0 +1,8 @@
+1: "ograniczenie do 50" && "szybkość ponizej 50" -> "prawidłowa predkosc"
+2: ~"prawidłowa predkosc" -> "nalezy zwolnic"
+3: "prawidłowa predkosc" && "trudne warunki" -> "nalezy zwolnic"
+4: "prawidłowa prędkość" && ~"trudne warunki" -> "jedz jak chcesz"
+4: "mgla" -> "trudne warunki" 
+5: "snieg" -> "trudne warunki" 
+6: "ograniczenie do 90" && "szybkość ponizej 90" -> "prawidłowa predkosc"
+Fakty: "ograniczenie do 50", "szybkość ponizej 50", "mgla"

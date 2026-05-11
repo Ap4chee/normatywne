@@ -1,525 +1,169 @@
 import { existsSync, readFileSync } from "node:fs";
 
-type Literal = string;
-type RuleKind = "strict" | "defeasible";
-type Attack = readonly [string, string];
+type Rule = { id: string; pre: string[]; out: string };
+type Arg = { id: string; out: string; rules: Set<string>; prem: Set<string>; sub: string[] };
+type Attack = [string, string];
 
-interface Rule {
-  name: string;
-  premises: Literal[];
-  conclusion: Literal;
-  kind: RuleKind;
+const FILE = "aspic-baza-wiedzy.bw";
+
+const strip = (s: string) => s.trim().replace(/^["']|["']$/g, "").trim();
+const clean = (s: string) => {
+  let x = s.trim().replace(/[.;]+$/g, "").trim();
+  const neg = x.startsWith("~");
+  if (neg) x = x.slice(1).trim();
+  return (neg ? "~" : "") + strip(x);
+};
+const split = (s = "") => s.split(",").map(clean).filter(Boolean);
+const opposite = (s: string) => (s.startsWith("~") ? s.slice(1) : `~${s}`);
+const fmt = (xs: Iterable<string>) => `[${[...xs].sort((a, b) => a.localeCompare(b)).join(", ")}]`;
+
+function product<T>(groups: T[][]): T[][] {
+  return groups.reduce<T[][]>((acc, group) => acc.flatMap((a) => group.map((x) => [...a, x])), [[]]);
 }
 
-interface KnowledgeBase {
-  strictFacts: Set<Literal>;
-  defeasibleFacts: Set<Literal>;
-  strictRules: Map<string, Rule>;
-  defeasibleRules: Map<string, Rule>;
-}
-
-interface ArgumentNode {
-  id: string;
-  conclusion: Literal;
-  usedRules: Set<string>;
-  basePremises: Set<Literal>;
-  subarguments: string[];
-}
-
-function stripQuotes(value: string): string {
-  const text = value.trim();
-  const first = text[0];
-  const last = text[text.length - 1];
-
-  if ((first === `"` && last === `"`) || (first === `'` && last === `'`)) {
-    return text.slice(1, -1).trim();
+function powerSet<T>(items: T[]): T[][] {
+  const sets: T[][] = [[]];
+  for (const item of items) {
+    for (const set of [...sets]) sets.push([...set, item]);
   }
-
-  return text;
+  return sets;
 }
 
-function cleanLiteral(raw: string): Literal {
-  let value = raw.trim().replace(/[.;]+$/g, "").trim();
-  let negated = false;
-
-  if (value.startsWith("~")) {
-    negated = true;
-    value = value.slice(1).trim();
-  }
-
-  const literal = stripQuotes(value);
-  return negated ? `~${literal}` : literal;
+function same<T>(a: Set<T>, b: Set<T>) {
+  return a.size === b.size && [...a].every((x) => b.has(x));
 }
 
-function oppositeOf(literal: Literal): Literal {
-  return literal.startsWith("~") ? literal.slice(1).trim() : `~${literal}`;
+function readFacts(src: string, name: "Kn" | "Kp") {
+  const m = src.match(new RegExp(`^[ \\t]*${name}[ \\t]*=[ \\t]*(.*)$`, "m"));
+  return new Set(split(m?.[1]));
 }
 
-function areOpposite(left: Literal, right: Literal): boolean {
-  return oppositeOf(left) === right || oppositeOf(right) === left;
+function readRules(src: string, name: "Rs" | "Rd") {
+  const rules = new Map<string, Rule>();
+  const block = src.match(new RegExp(`\\b${name}[ \\t]*=[ \\t]*\\{([\\s\\S]*?)\\}`));
+  if (!block) return rules;
+
+  const rx = /([A-Za-z_][\w-]*)\s*:\s*([\s\S]*?)\s*(?:=>|->)\s*([\s\S]*?)(?=(?:[.,;]\s*)?[A-Za-z_][\w-]*\s*:|$)/g;
+  for (const m of block[1].matchAll(rx)) {
+    rules.set(m[1], { id: m[1], pre: split(m[2]), out: clean(m[3]) });
+  }
+  return rules;
 }
 
-function splitList(text: string): string[] {
-  const parts: string[] = [];
-  let buffer = "";
-  let quote: string | null = null;
-
-  for (let i = 0; i < text.length; i += 1) {
-    const char = text[i];
-    const nextTwo = text.slice(i, i + 2);
-
-    if (quote) {
-      buffer += char;
-      if (char === quote) {
-        quote = null;
-      }
-      continue;
-    }
-
-    if (char === `"` || char === `'`) {
-      quote = char;
-      buffer += char;
-      continue;
-    }
-
-    if (char === "," || nextTwo === "&&") {
-      const item = buffer.trim();
-      if (item) {
-        parts.push(item);
-      }
-      buffer = "";
-      if (nextTwo === "&&") {
-        i += 1;
-      }
-      continue;
-    }
-
-    buffer += char;
-  }
-
-  const item = buffer.trim();
-  if (item) {
-    parts.push(item);
-  }
-
-  return parts;
-}
-
-function parseLiteralSet(raw: string | undefined): Set<Literal> {
-  if (!raw) {
-    return new Set();
-  }
-
-  return new Set(splitList(raw).map(cleanLiteral).filter(Boolean));
-}
-
-function makeRuleName(rawName: string, rules: Map<string, Rule>): string {
-  const normalized = rawName.trim();
-  const base = /^\d+$/.test(normalized) ? `r${normalized}` : normalized;
-
-  if (!rules.has(base)) {
-    return base;
-  }
-
-  let suffix = 2;
-  while (rules.has(`${base}_${suffix}`)) {
-    suffix += 1;
-  }
-
-  return `${base}_${suffix}`;
-}
-
-function parseAspicStyle(content: string): KnowledgeBase | null {
-  if (!/\b(?:Kn|Kp|Rs|Rd)\s*=/.test(content)) {
-    return null;
-  }
-
-  const readFactLine = (name: "Kn" | "Kp"): Set<Literal> => {
-    const match = content.match(new RegExp(`\\b${name}\\s*=\\s*([^\\r\\n}]*)`));
-    return parseLiteralSet(match?.[1]);
-  };
-
-  const readRuleBlock = (name: "Rs" | "Rd", kind: RuleKind): Map<string, Rule> => {
-    const rules = new Map<string, Rule>();
-    const block = content.match(new RegExp(`\\b${name}\\s*=\\s*\\{([\\s\\S]*?)\\}`, "m"));
-
-    if (!block) {
-      return rules;
-    }
-
-    const rulePattern =
-      /([A-Za-z_][\w-]*)\s*:\s*([\s\S]*?)\s*(?:=>|->)\s*([\s\S]*?)(?=(?:[.,;]\s*)?[A-Za-z_][\w-]*\s*:|$)/g;
-    let match: RegExpExecArray | null;
-
-    while ((match = rulePattern.exec(block[1])) !== null) {
-      const nameFromFile = match[1];
-      const ruleName = makeRuleName(nameFromFile, rules);
-      const premises = splitList(match[2]).map(cleanLiteral).filter(Boolean);
-      const conclusion = cleanLiteral(match[3]);
-
-      rules.set(ruleName, { name: ruleName, premises, conclusion, kind });
-    }
-
-    return rules;
-  };
-
+function parseBase(path: string) {
+  const src = readFileSync(path, "utf8");
   return {
-    strictFacts: readFactLine("Kn"),
-    defeasibleFacts: readFactLine("Kp"),
-    strictRules: readRuleBlock("Rs", "strict"),
-    defeasibleRules: readRuleBlock("Rd", "defeasible"),
+    kn: readFacts(src, "Kn"),
+    kp: readFacts(src, "Kp"),
+    rs: readRules(src, "Rs"),
+    rd: readRules(src, "Rd"),
   };
 }
 
-function parseSimpleRuleFile(content: string): KnowledgeBase {
-  const strictRules = new Map<string, Rule>();
-  const defeasibleRules = new Map<string, Rule>();
-  const facts = new Set<Literal>();
+function buildArgs(base: ReturnType<typeof parseBase>) {
+  const args: Arg[] = [];
+  const add = (out: string, rules = new Set<string>(), prem = new Set([out]), sub: string[] = []) =>
+    args.push({ id: `A${args.length}`, out, rules, prem, sub });
 
-  for (const line of content.split(/\r?\n/)) {
-    const trimmed = line.trim();
-    if (!trimmed) {
-      continue;
-    }
+  [...base.kn, ...base.kp].forEach((fact) => add(fact));
 
-    const factsMatch = trimmed.match(/^Fakty\s*:\s*(.+)$/i);
-    if (factsMatch) {
-      for (const fact of parseLiteralSet(factsMatch[1])) {
-        facts.add(fact);
-      }
-      continue;
-    }
-
-    const ruleMatch = trimmed.match(/^([^:#]+)\s*:\s*(.+?)\s*->\s*(.+)$/);
-    if (!ruleMatch) {
-      continue;
-    }
-
-    const ruleName = makeRuleName(ruleMatch[1], defeasibleRules);
-    defeasibleRules.set(ruleName, {
-      name: ruleName,
-      premises: splitList(ruleMatch[2]).map(cleanLiteral).filter(Boolean),
-      conclusion: cleanLiteral(ruleMatch[3]),
-      kind: "defeasible",
-    });
-  }
-
-  return {
-    strictFacts: new Set(),
-    defeasibleFacts: facts,
-    strictRules,
-    defeasibleRules,
-  };
-}
-
-function parseKnowledgeBase(content: string): KnowledgeBase {
-  return parseAspicStyle(content) ?? parseSimpleRuleFile(content);
-}
-
-function demoKnowledgeBase(): KnowledgeBase {
-  return {
-    strictFacts: new Set(["e"]),
-    defeasibleFacts: new Set(["a", "b", "c", "d"]),
-    strictRules: new Map([
-      ["r1", { name: "r1", premises: ["e"], conclusion: "f", kind: "strict" }],
-    ]),
-    defeasibleRules: new Map([
-      ["r2", { name: "r2", premises: ["a", "b"], conclusion: "g", kind: "defeasible" }],
-      ["r3", { name: "r3", premises: ["c"], conclusion: "~g", kind: "defeasible" }],
-      ["r4", { name: "r4", premises: ["c", "d"], conclusion: "h", kind: "defeasible" }],
-      ["r5", { name: "r5", premises: ["g", "h"], conclusion: "w", kind: "defeasible" }],
-      ["r6", { name: "r6", premises: ["f"], conclusion: "~r3", kind: "defeasible" }],
-    ]),
-  };
-}
-
-function unionSets<T>(...sets: Set<T>[]): Set<T> {
-  const result = new Set<T>();
-
-  for (const set of sets) {
-    for (const item of set) {
-      result.add(item);
-    }
-  }
-
-  return result;
-}
-
-function sameSet<T>(left: Set<T>, right: Set<T>): boolean {
-  if (left.size !== right.size) {
-    return false;
-  }
-
-  for (const value of left) {
-    if (!right.has(value)) {
-      return false;
-    }
-  }
-
-  return true;
-}
-
-function cartesianProduct<T>(groups: T[][]): T[][] {
-  if (groups.length === 0) {
-    return [[]];
-  }
-
-  return groups.reduce<T[][]>(
-    (partial, group) => partial.flatMap((prefix) => group.map((item) => [...prefix, item])),
-    [[]],
-  );
-}
-
-function buildArguments(base: KnowledgeBase): ArgumentNode[] {
-  const argumentsList: ArgumentNode[] = [];
-
-  const addBaseArgument = (literal: Literal): void => {
-    argumentsList.push({
-      id: `A${argumentsList.length}`,
-      conclusion: literal,
-      usedRules: new Set(),
-      basePremises: new Set([literal]),
-      subarguments: [],
-    });
-  };
-
-  for (const literal of base.strictFacts) {
-    addBaseArgument(literal);
-  }
-
-  for (const literal of base.defeasibleFacts) {
-    addBaseArgument(literal);
-  }
-
-  const allRules = [...base.strictRules.values(), ...base.defeasibleRules.values()];
+  const rules = [...base.rs.values(), ...base.rd.values()];
   let changed = true;
-
   while (changed) {
     changed = false;
+    for (const rule of rules) {
+      const options = rule.pre.map((p) => args.filter((a) => a.out === p));
+      if (options.some((o) => o.length === 0)) continue;
 
-    for (const rule of allRules) {
-      const matchingArguments = rule.premises.map((premise) =>
-        argumentsList.filter((argument) => argument.conclusion === premise),
-      );
-
-      if (matchingArguments.some((group) => group.length === 0)) {
-        continue;
-      }
-
-      for (const variant of cartesianProduct(matchingArguments)) {
-        const usedRules = unionSets(new Set([rule.name]), ...variant.map((argument) => argument.usedRules));
-        const basePremises = unionSets(...variant.map((argument) => argument.basePremises));
-        const subarguments = variant.map((argument) => argument.id);
-
-        const alreadyExists = argumentsList.some(
-          (argument) =>
-            argument.conclusion === rule.conclusion &&
-            sameSet(argument.usedRules, usedRules) &&
-            sameSet(argument.basePremises, basePremises),
-        );
-
-        if (!alreadyExists) {
-          argumentsList.push({
-            id: `A${argumentsList.length}`,
-            conclusion: rule.conclusion,
-            usedRules,
-            basePremises,
-            subarguments,
-          });
+      for (const combo of product(options)) {
+        const used = new Set([rule.id, ...combo.flatMap((a) => [...a.rules])]);
+        const prem = new Set(combo.flatMap((a) => [...a.prem]));
+        const exists = args.some((a) => a.out === rule.out && same(a.rules, used) && same(a.prem, prem));
+        if (!exists) {
+          add(rule.out, used, prem, combo.map((a) => a.id));
           changed = true;
         }
       }
     }
   }
-
-  return argumentsList;
+  return args;
 }
 
-function buildAttacks(argumentsList: ArgumentNode[], base: KnowledgeBase): Attack[] {
+function buildAttacks(args: Arg[], base: ReturnType<typeof parseBase>) {
   const attacks = new Map<string, Attack>();
+  const add = (a: string, b: string) => attacks.set(`${a}->${b}`, [a, b]);
 
-  const rememberAttack = (source: string, target: string): void => {
-    attacks.set(`${source}->${target}`, [source, target]);
-  };
-
-  const isRuleDefeasible = (ruleName: string): boolean => base.defeasibleRules.has(ruleName);
-
-  for (const source of argumentsList) {
-    for (const target of argumentsList) {
-      if (
-        areOpposite(source.conclusion, target.conclusion) &&
-        ([...target.usedRules].some(isRuleDefeasible) || base.defeasibleFacts.has(target.conclusion))
-      ) {
-        rememberAttack(source.id, target.id);
-      }
-
-      for (const premise of target.basePremises) {
-        if (source.conclusion === oppositeOf(premise)) {
-          rememberAttack(source.id, target.id);
-        }
-      }
-
-      for (const ruleName of target.usedRules) {
-        if (source.conclusion === `~${ruleName}`) {
-          rememberAttack(source.id, target.id);
-        }
-      }
+  for (const a of args) {
+    for (const b of args) {
+      const bIsDefeasible = [...b.rules].some((r) => base.rd.has(r)) || base.kp.has(b.out);
+      if (opposite(a.out) === b.out && bIsDefeasible) add(a.id, b.id);
+      for (const p of b.prem) if (a.out === opposite(p)) add(a.id, b.id);
+      for (const r of b.rules) if (a.out === `~${r}`) add(a.id, b.id);
     }
   }
 
-  return [...attacks.values()].sort((left, right) => left[0].localeCompare(right[0]) || left[1].localeCompare(right[1]));
+  return [...attacks.values()].sort((x, y) => x.join("").localeCompare(y.join("")));
 }
 
-function powerSet<T>(items: T[]): T[][] {
-  const result: T[][] = [[]];
+function preferred(ids: string[], attacks: Attack[]) {
+  const atk = new Set(attacks.map(([a, b]) => `${a}->${b}`));
+  const admissible = powerSet(ids).filter((set) => {
+    const conflict = set.some((a) => set.some((b) => atk.has(`${a}->${b}`)));
+    if (conflict) return false;
 
-  for (const item of items) {
-    const additions = result.map((subset) => [...subset, item]);
-    result.push(...additions);
-  }
+    return set.every((arg) =>
+      attacks
+        .filter(([, target]) => target === arg)
+        .every(([attacker]) => set.some((defender) => atk.has(`${defender}->${attacker}`))),
+    );
+  });
 
-  return result;
+  return admissible.filter((a) => !admissible.some((b) => a.length < b.length && a.every((x) => b.includes(x))));
 }
 
-function isSubset<T>(small: T[], big: T[]): boolean {
-  const bigSet = new Set(big);
-  return small.every((item) => bigSet.has(item));
-}
-
-function preferredExtensions(argumentIds: string[], attacks: Attack[]): string[][] {
-  const attackKeys = new Set(attacks.map(([source, target]) => `${source}->${target}`));
-  const admissible: string[][] = [];
-
-  for (const subset of powerSet(argumentIds)) {
-    let conflictFree = true;
-
-    for (const left of subset) {
-      for (const right of subset) {
-        if (attackKeys.has(`${left}->${right}`)) {
-          conflictFree = false;
-        }
-      }
-    }
-
-    if (!conflictFree) {
-      continue;
-    }
-
-    let defended = true;
-    for (const member of subset) {
-      const attackers = attacks.filter(([, target]) => target === member).map(([source]) => source);
-      const everyAttackAnswered = attackers.every((attacker) =>
-        subset.some((defender) => attackKeys.has(`${defender}->${attacker}`)),
-      );
-
-      if (!everyAttackAnswered) {
-        defended = false;
-        break;
-      }
-    }
-
-    if (defended) {
-      admissible.push(subset);
-    }
-  }
-
-  return admissible.filter(
-    (candidate) => !admissible.some((other) => candidate.length < other.length && isSubset(candidate, other)),
-  );
-}
-
-function groundedExtension(argumentIds: string[], attacks: Attack[]): Set<string> {
+function grounded(ids: string[], attacks: Attack[]) {
   const accepted = new Set<string>();
-  const attackKeys = new Set(attacks.map(([source, target]) => `${source}->${target}`));
+  const atk = new Set(attacks.map(([a, b]) => `${a}->${b}`));
 
   while (true) {
-    const nextRound = new Set<string>();
-
-    for (const argumentId of argumentIds) {
-      if (accepted.has(argumentId)) {
-        continue;
-      }
-
-      const attackers = attacks.filter(([, target]) => target === argumentId).map(([source]) => source);
-      const defended =
-        attackers.length === 0 ||
-        attackers.every((attacker) => [...accepted].some((defender) => attackKeys.has(`${defender}->${attacker}`)));
-
-      if (defended) {
-        nextRound.add(argumentId);
-      }
-    }
-
-    if (nextRound.size === 0) {
-      break;
-    }
-
-    for (const argumentId of nextRound) {
-      accepted.add(argumentId);
-    }
+    const next = ids.filter(
+      (id) =>
+        !accepted.has(id) &&
+        attacks
+          .filter(([, target]) => target === id)
+          .every(([attacker]) => [...accepted].some((defender) => atk.has(`${defender}->${attacker}`))),
+    );
+    if (!next.length) break;
+    next.forEach((id) => accepted.add(id));
   }
 
   return accepted;
 }
 
-function printableSet(values: Iterable<string>): string {
-  return `[${[...values].sort((left, right) => left.localeCompare(right)).join(", ")}]`;
-}
-
-function showResult(argumentsList: ArgumentNode[], attacks: Attack[]): void {
-  const argumentIds = argumentsList.map((argument) => argument.id);
-  const conclusionById = new Map(argumentsList.map((argument) => [argument.id, argument.conclusion]));
+function print(args: Arg[], attacks: Attack[]) {
+  const ids = args.map((a) => a.id);
+  const concl = new Map(args.map((a) => [a.id, a.out]));
+  const byId = (id: string) => concl.get(id) ?? id;
 
   console.log("--- ARGUMENTY ---");
-  for (const argument of argumentsList) {
-    console.log(
-      `${argument.id} | wniosek: ${argument.conclusion} | reguly: ${printableSet(argument.usedRules)} | sub: ${printableSet(argument.subarguments)}`,
-    );
+  for (const a of args) {
+    console.log(`${a.id} > wniosek: ${a.out} > reguly: ${fmt(a.rules)} > sub: ${fmt(a.sub)}`);
   }
 
   console.log("\n--- ATAKI ---");
-  if (attacks.length === 0) {
-    console.log("brak");
-  } else {
-    for (const [source, target] of attacks) {
-      console.log(`${source} atakuje ${target}`);
-    }
-  }
+  attacks.length ? attacks.forEach(([a, b]) => console.log(`${a} atakuje ${b}`)) : console.log("brak");
 
   console.log("\n--- PREFERRED ---");
-  preferredExtensions(argumentIds, attacks).forEach((extension, index) => {
-    const conclusions = extension.map((id) => conclusionById.get(id) ?? id);
-    console.log(`${index + 1}: ${printableSet(conclusions)}`);
-  });
+  preferred(ids, attacks).forEach((e, i) => console.log(`${i + 1}: ${fmt(e.map(byId))}`));
 
   console.log("\n--- GROUNDED ---");
-  const grounded = groundedExtension(argumentIds, attacks);
-  console.log(printableSet([...grounded].map((id) => conclusionById.get(id) ?? id)));
+  console.log(fmt([...grounded(ids, attacks)].map(byId)));
 }
 
-function loadKnowledgeBase(): KnowledgeBase {
-  const filesFromCommandLine = process.argv
-    .slice(2)
-    .filter((path) => path.toLowerCase().endsWith(".bw"));
+if (!existsSync(FILE)) throw new Error(`Brak pliku ${FILE}`);
 
-  const candidates = [
-    ...filesFromCommandLine,
-    "aspic-baza-wiedzy.bw",
-  ].filter((path): path is string => Boolean(path));
-
-  for (const path of candidates) {
-    if (existsSync(path)) {
-      console.log(`Wczytano baze wiedzy: ${path}\n`);
-      return parseKnowledgeBase(readFileSync(path, "utf8"));
-    }
-  }
-
-  console.log("Nie znaleziono pliku .bw, uruchamiam dane demonstracyjne.\n");
-  return demoKnowledgeBase();
-}
-
-const knowledgeBase = loadKnowledgeBase();
-const argumentsList = buildArguments(knowledgeBase);
-const attacks = buildAttacks(argumentsList, knowledgeBase);
-
-showResult(argumentsList, attacks);
+console.log(`Wczytano baze wiedzy: ${FILE}\n`);
+const base = parseBase(FILE);
+const args = buildArgs(base);
+const attacks = buildAttacks(args, base);
+print(args, attacks);

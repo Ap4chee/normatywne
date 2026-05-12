@@ -5,10 +5,10 @@ Program buduje argumenty na podstawie bazy wiedzy zapisanej w pliku `aspic-baza-
 ## Uruchomienie
 
 ```powershell
-node main.ts
+node --experimental-strip-types main.ts .\aspic-baza-wiedzy.bw
 ```
 
-Program domyslnie czyta plik:
+Jesli nie podasz sciezki, program domyslnie czyta plik:
 
 ```txt
 aspic-baza-wiedzy.bw
@@ -38,7 +38,7 @@ Znaczenie elementow:
 Po uruchomieniu:
 
 ```powershell
-node main.ts
+node --experimental-strip-types main.ts .\aspic-baza-wiedzy.bw
 ```
 
 program wypisuje:
